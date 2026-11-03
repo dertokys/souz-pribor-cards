@@ -1,0 +1,38 @@
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _optional_float(name: str) -> float | None:
+    raw = os.getenv(name, "").strip()
+    return float(raw) if raw else None
+
+
+@dataclass(frozen=True)
+class Settings:
+    api_key: str
+    base_url: str | None
+    model: str
+    temperature: float | None
+    structured_outputs: bool
+    timeout: float
+    max_attempts: int
+    max_tokens: int
+    reasoning_effort: str | None
+
+
+def get_settings() -> Settings:
+    return Settings(
+        api_key=os.getenv("LLM_API_KEY", "").strip(),
+        base_url=os.getenv("LLM_BASE_URL", "").strip() or None,
+        model=os.getenv("LLM_MODEL", "openai/gpt-5-mini").strip(),
+        temperature=_optional_float("LLM_TEMPERATURE"),
+        structured_outputs=os.getenv("LLM_STRUCTURED_OUTPUTS", "true").lower() in {"1", "true", "yes"},
+        timeout=float(os.getenv("LLM_TIMEOUT", "120")),
+        max_attempts=max(1, int(os.getenv("LLM_MAX_ATTEMPTS", "2"))),
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "16000")),
+        reasoning_effort=os.getenv("LLM_REASONING_EFFORT", "low").strip() or None,
+    )
