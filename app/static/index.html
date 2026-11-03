@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Генератор карточек КИП</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#c8223f; --ok:#1f7a4d; --warn:#9a6700; --warn-bg:#fff8e1; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:14px 24px; display:flex; align-items:baseline; gap:12px; }
+  header h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:13px; }
+  main { display:grid; grid-template-columns:minmax(340px, 440px) 1fr; gap:20px; padding:20px 24px; align-items:start; }
+  @media (max-width: 980px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--line); }
+  .tab { border:0; background:none; padding:8px 12px; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; font:inherit; }
+  .tab.active { color:var(--text); border-bottom-color:var(--accent); }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; border:1px solid var(--line); border-radius:6px; padding:8px 10px; font:inherit; background:#fff; }
+  textarea { resize:vertical; font-family:ui-monospace, Consolas, monospace; font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; margin-top:14px; }
+  button.primary { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:10px 18px; font:inherit; cursor:pointer; }
+  button.primary:disabled { opacity:.6; cursor:wait; }
+  button.ghost { background:#fff; border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; font-size:13px; cursor:pointer; }
+  .hint { color:var(--muted); font-size:12px; }
+  .error { background:#fdecee; color:#8a1527; border-radius:6px; padding:10px 12px; margin-top:12px; white-space:pre-wrap; }
+  .empty { color:var(--muted); text-align:center; padding:60px 20px; }
+  section.block { border-top:1px solid var(--line); padding:14px 0; }
+  section.block:first-of-type { border-top:0; padding-top:0; }
+  .block-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; }
+  .block-head h3 { margin:0; font-size:15px; }
+  .counter { color:var(--muted); font-weight:normal; font-size:13px; }
+  .text { white-space:pre-wrap; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  td, th { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  th { color:var(--muted); font-weight:normal; font-size:13px; }
+  .tag { font-size:12px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
+  .tag.no_data { background:#eef1f5; color:var(--muted); }
+  .tag.corrected, .tag.from_text { background:var(--warn-bg); color:var(--warn); }
+  .notice { background:var(--warn-bg); color:var(--warn); border-radius:6px; padding:10px 12px; margin-bottom:14px; }
+  .good { color:var(--ok); }
+  ul { margin:4px 0; padding-left:20px; }
+  pre { background:#f7f8fa; border:1px solid var(--line); border-radius:6px; padding:12px; overflow:auto; font-size:13px; max-height:70vh; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Генератор карточек КИП</h1>
+  <span>черновик карточки товара для B2B-магазина по данным о приборе</span>
+</header>
+<main>
+  <div class="panel">
+    <div class="tabs" id="input-tabs">
+      <button class="tab active" data-tab="fields">Поля</button>
+      <button class="tab" data-tab="json">JSON</button>
+    </div>
+    <div class="row" style="margin-top:0">
+      <select id="example"><option value="">Загрузить пример…</option></select>
+    </div>
+    <div id="tab-fields">
+      <label for="f-name">Название (модель) *</label>
+      <input id="f-name" placeholder="ПД100-ДИ1,0-115-0,5">
+      <label for="f-manufacturer">Производитель</label>
+      <input id="f-manufacturer" placeholder="ОВЕН">
+      <label for="f-type">Тип прибора</label>
+      <input id="f-type" placeholder="преобразователь давления">
+      <label for="f-specs">Характеристики — по одной на строку, «название: значение»</label>
+      <textarea id="f-specs" rows="8" placeholder="Выходной сигнал: 4...20 мА&#10;Степень защиты: IP65"></textarea>
+      <label for="f-description">Описание</label>
+      <textarea id="f-description" rows="5"></textarea>
+    </div>
+    <div id="tab-json" hidden>
+      <label for="f-json">{"name", "manufacturer", "specs": {...}, "description"}</label>
+      <textarea id="f-json" rows="22" spellcheck="false"></textarea>
+    </div>
+    <div class="row">
+      <button class="primary" id="submit">Сгенерировать</button>
+      <span class="hint" id="status"></span>
+    </div>
+    <div class="error" id="error" hidden></div>
+  </div>
+
+  <div class="panel">
+    <div class="tabs" id="output-tabs">
+      <button class="tab active" data-tab="card">Карточка</button>
+      <button class="tab" data-tab="markdown">Markdown</button>
+      <button class="tab" data-tab="raw">JSON</button>
+    </div>
+    <div id="tab-card"><div class="empty">Заполните данные слева и нажмите «Сгенерировать»</div></div>
+    <div id="tab-markdown" hidden></div>
+    <div id="tab-raw" hidden></div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let inputMode = "fields";
+let examples = {};
+
+function switchTabs(groupId, prefix, onChange) {
+  $(groupId).addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    $(groupId).querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
+    $(groupId).querySelectorAll(".tab").forEach((t) => { $(prefix + t.dataset.tab).hidden = t !== tab; });
+    if (onChange) onChange(tab.dataset.tab);
+  });
+}
+
+switchTabs("input-tabs", "tab-", (tab) => {
+  if (tab === "json" && inputMode === "fields") $("f-json").value = JSON.stringify(fieldsToJson(), null, 2);
+  if (tab === "fields" && inputMode === "json") { try { jsonToFields(JSON.parse($("f-json").value)); } catch (_) {} }
+  inputMode = tab;
+});
+switchTabs("output-tabs", "tab-");
+
+function fieldsToJson() {
+  const specs = {};
+  $("f-specs").value.split("\n").forEach((line) => {
+    const i = line.indexOf(":");
+    if (i > 0) specs[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    else if (line.trim()) specs[line.trim()] = "";
+  });
+  return {
+    name: $("f-name").value.trim(),
+    manufacturer: $("f-manufacturer").value.trim(),
+    product_type: $("f-type").value.trim(),
+    specs,
+    description: $("f-description").value.trim(),
+  };
+}
+
+function jsonToFields(data) {
+  $("f-name").value = data.name || "";
+  $("f-manufacturer").value = data.manufacturer || "";
+  $("f-type").value = data.product_type || "";
+  const specs = data.specs && typeof data.specs === "object" ? data.specs : {};
+  $("f-specs").value = Object.entries(specs).map(([k, v]) => `${k}: ${v ?? ""}`).join("\n");
+  $("f-description").value = data.description || "";
+}
+
+async function loadExamples() {
+  try {
+    examples = await (await fetch("/api/examples")).json();
+    for (const name of Object.keys(examples)) {
+      const opt = document.createElement("option");
+      opt.value = name; opt.textContent = name;
+      $("example").appendChild(opt);
+    }
+  } catch (_) {}
+}
+
+$("example").addEventListener("change", (e) => {
+  const data = examples[e.target.value];
+  if (!data) return;
+  const full = { ...data };
+  jsonToFields(full);
+  $("f-json").value = JSON.stringify(full, null, 2);
+});
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function copyButton(text) {
+  const id = "c" + Math.random().toString(36).slice(2);
+  setTimeout(() => {
+    const btn = $(id);
+    if (btn) btn.onclick = async () => { await navigator.clipboard.writeText(text); btn.textContent = "Скопировано"; setTimeout(() => (btn.textContent = "Копировать"), 1200); };
+  });
+  return `<button class="ghost" id="${id}">Копировать</button>`;
+}
+
+function block(title, counter, copyText, body) {
+  return `<section class="block"><div class="block-head"><h3>${title} ${counter ? `<span class="counter">${counter}</span>` : ""}</h3>${copyText ? copyButton(copyText) : ""}</div>${body}</section>`;
+}
+
+const STATUS = { ok: "", corrected: "исправлено по входу", from_text: "из описания", no_data: "уточнить" };
+
+function renderCard(card) {
+  const q = card.quality;
+  let html = "";
+  if (q.needs_review) html += `<div class="notice">Требует проверки: автоматическая проверка внесла правки (${q.warnings.length}). Подробности внизу.</div>`;
+  html += block("SEO-заголовок", `${q.seo_title_length}/70`, card.seo_title, `<div class="text">${esc(card.seo_title)}</div>`);
+  html += block("SEO-описание", `${q.seo_description_length} симв., норма 800–1200`, card.seo_description, `<div class="text">${esc(card.seo_description)}</div>`);
+  const specsText = card.key_specs.map((s) => `${s.name}: ${s.value}`).join("\n");
+  const rows = card.key_specs.map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.value)}</td><td>${STATUS[s.status] ? `<span class="tag ${s.status}">${STATUS[s.status]}</span>` : ""}</td></tr>`).join("");
+  html += block("Ключевые характеристики", "", specsText, rows ? `<table><tr><th>Характеристика</th><th>Значение</th><th></th></tr>${rows}</table>` : "Данных нет");
+  html += block("Поисковые запросы", "", card.search_queries.join("\n"), `<ul>${card.search_queries.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
+  const c = card.commercial;
+  const cText = `${c.summary}\n\nКому подходит:\n${c.target_customers.map((x) => "- " + x).join("\n")}\n\nЗадачи:\n${c.tasks.map((x) => "- " + x).join("\n")}`;
+  html += block("Для менеджера", "", cText, `<div class="text">${esc(c.summary)}</div><b>Кому подходит</b><ul>${c.target_customers.map((x) => `<li>${esc(x)}</li>`).join("")}</ul><b>Задачи</b><ul>${c.tasks.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
+  const missing = card.missing_fields.map((m) => `<li><code>${esc(m.field)}</code> — ${esc(m.reason)}</li>`).concat(card.key_specs.filter((s) => s.status === "no_data").map((s) => `<li>${esc(s.name)} — данных нет</li>`));
+  html += block("Отсутствующие данные", "", "", missing.length ? `<ul>${missing.join("")}</ul>` : `<span class="good">Основные поля заполнены</span>`);
+  if (card.data_conflicts.length) html += block("Противоречия во входных данных", "", "", `<ul>${card.data_conflicts.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
+  const repaired = q.repaired_issues.length ? `<div class="hint" style="margin-top:8px">Исправлено моделью после повторного запроса:</div><ul class="hint">${q.repaired_issues.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+  html += block("Проверка", `${esc(card.model)}, попыток: ${q.attempts}`, "", (q.warnings.length ? `<ul>${q.warnings.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : `<span class="good">Все числа и характеристики найдены во входных данных, длины в норме</span>`) + repaired);
+  return html;
+}
+
+$("submit").addEventListener("click", async () => {
+  $("error").hidden = true;
+  const body = inputMode === "json" ? $("f-json").value : JSON.stringify(fieldsToJson());
+  $("submit").disabled = true;
+  $("status").textContent = "Генерация, обычно 10–30 секунд…";
+  const started = Date.now();
+  try {
+    const resp = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    const data = await resp.json().catch(() => ({ error: `Сервер вернул ${resp.status}` }));
+    if (!resp.ok) {
+      $("error").textContent = data.error + (data.details && data.details.length ? "\n• " + data.details.join("\n• ") : "");
+      $("error").hidden = false;
+      return;
+    }
+    $("tab-card").innerHTML = renderCard(data.card);
+    $("tab-markdown").innerHTML = `<div class="block-head"><span class="hint">Готово для вставки в CMS или документ</span>${copyButton(data.markdown)}</div><pre>${esc(data.markdown)}</pre>`;
+    const raw = JSON.stringify(data.card, null, 2);
+    $("tab-raw").innerHTML = `<div class="block-head"><span class="hint">Структурированный ответ API</span>${copyButton(raw)}</div><pre>${esc(raw)}</pre>`;
+    $("status").textContent = `Готово за ${((Date.now() - started) / 1000).toFixed(1)} с`;
+  } catch (e) {
+    $("error").textContent = "Сервер недоступен: " + e.message;
+    $("error").hidden = false;
+  } finally {
+    $("submit").disabled = false;
+    if ($("status").textContent.startsWith("Генерация")) $("status").textContent = "";
+  }
+});
+
+loadExamples();
+</script>
+</body>
+</html>
