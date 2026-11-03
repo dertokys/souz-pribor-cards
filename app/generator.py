@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 
 from pydantic import ValidationError
@@ -16,6 +17,7 @@ from .prompts import (
 )
 from .schemas import CardResult, Commercial, LLMCard, MissingField, ProductInput, ProductRef, Quality
 from .validator import (
+    NOT_A_SPEC,
     NumberCheck,
     Report,
     find_conflicts,
@@ -42,6 +44,9 @@ def parse_card(raw: str) -> LLMCard:
         raise LLMBadResponse(f"JSON не соответствует схеме ({problems})") from e
 
 
+NO_DATA_IN_CONFLICT = re.compile(r"данных нет|нет данных", re.IGNORECASE)
+
+
 def _fix_strings(value):
     if isinstance(value, str):
         return fix_mixed_script(value)
@@ -66,11 +71,11 @@ def cut_to_words(text: str, limit: int) -> str:
 
 
 def fallback_title(product: ProductInput) -> str:
-    parts = [product.product_type, product.manufacturer, product.name]
-    title = " ".join(p for p in parts if p)
+    brand = "" if product.manufacturer.lower() in product.name.lower() else product.manufacturer
+    title = " ".join(p for p in [product.product_type, brand, product.name] if p)
     title = title[:1].upper() + title[1:]
     if len(title) > TITLE_MAX:
-        title = " ".join(p for p in [product.manufacturer, product.name] if p)
+        title = " ".join(p for p in [brand, product.name] if p)
     return cut_to_words(title, TITLE_MAX)
 
 
@@ -159,7 +164,7 @@ def finalize(
         warnings.append(f"Слово «{word}» содержит буквы разных алфавитов — проверьте написание")
 
     for issue in report.issues:
-        if issue.startswith("key_specs"):
+        if issue.startswith("key_specs") and NOT_A_SPEC not in issue:
             warnings.append(f"Отброшено при проверке: {issue}")
 
     missing = list(missing)
@@ -174,7 +179,9 @@ def finalize(
     if product.specs and product.description:
         for conflict in card.data_conflicts:
             conflict = conflict.strip()
-            if conflict and not any(k and k in norm(conflict) for k in found_keys):
+            if not conflict or NO_DATA_IN_CONFLICT.search(conflict):
+                continue
+            if not any(k and k in norm(conflict) for k in found_keys):
                 conflicts.append(conflict)
 
     return CardResult(

@@ -23,7 +23,7 @@ def review_reason(card: CardResult) -> str:
 
 def to_markdown(card: CardResult) -> str:
     p = card.product
-    title = " ".join(x for x in [p.manufacturer, p.name] if x)
+    title = p.name if p.manufacturer.lower() in p.name.lower() else " ".join(x for x in [p.manufacturer, p.name] if x)
     lines = [f"# Черновик карточки: {title}", ""]
     meta = [f"Артикул: {p.sku}" if p.sku else "", f"[страница товара]({p.url})" if p.url else ""]
     meta = [m for m in meta if m]

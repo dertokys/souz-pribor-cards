@@ -28,9 +28,10 @@ def test_placeholder_spec_names_dropped(product):
         {"name": "Отсутствующий типовой параметр", "value": "данных нет", "source": "none"},
         {"name": "Остальные важные параметры", "value": "данных нет", "source": "none"},
         {"name": "диапазон измерений", "value": "данных нет", "source": "none"},
+        {"name": "Время отклика (обычно важный параметр)", "value": "данных нет", "source": "none"},
     ])
     lines = validate(LLMCard(**card), product).spec_lines
-    assert [s.name for s in lines] == ["Диапазон измерений"]
+    assert [s.name for s in lines] == ["Диапазон измерений", "Время отклика"]
 
 
 def test_ungrounded_numbers(product):
@@ -62,8 +63,8 @@ def test_clean_card_has_no_issues(product):
     assert report.issues == []
     statuses = {s.name: s.status for s in report.spec_lines}
     assert statuses == {
-        "Выходной сигнал": "ok",
-        "Степень защиты": "ok",
+        "Выходной сигнал постоянного тока": "ok",
+        "Степень защиты корпуса": "ok",
         "Материал мембраны": "from_text",
         "Погрешность": "no_data",
     }
@@ -75,6 +76,7 @@ def test_spec_value_replaced_with_source(product):
     line = report.spec_lines[0]
     assert line.value == "12…36 В постоянного тока"
     assert line.status == "corrected"
+    assert line.name == "Напряжение питания"
     assert report.spec_warnings
 
 
@@ -143,6 +145,19 @@ def test_none_for_existing_spec_gets_real_value(product):
     assert report.spec_lines[0].value == "12…36 В постоянного тока"
     assert report.spec_lines[0].status == "corrected"
     assert report.issues == []
+
+
+def test_none_matches_key_with_units_in_parentheses():
+    product = ProductInput(name="АКИП-4131", specs={"Масса (кг)": "2,6"})
+    card = make_card(key_specs=[{"name": "Масса", "value": "данных нет", "source": "none"}])
+    line = validate(LLMCard(**card), product).spec_lines[0]
+    assert (line.name, line.value, line.status) == ("Масса (кг)", "2,6", "corrected")
+
+
+def test_shortened_spec_name_restored_from_key():
+    product = ProductInput(name="АКИП-1162", specs={"19” форм фактор": "да"})
+    card = make_card(key_specs=[{"name": "Форм фактор", "value": "да", "source": "specs:19” форм фактор"}])
+    assert validate(LLMCard(**card), product).spec_lines[0].name == "19” форм фактор"
 
 
 def test_spec_name_keeps_units_from_key():

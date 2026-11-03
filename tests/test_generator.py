@@ -76,6 +76,16 @@ def test_conflicts_merged_without_duplicates(product):
     assert card.data_conflicts[1].startswith("Тип индикатора")
 
 
+def test_absent_value_is_not_a_conflict(product):
+    data = make_card(data_conflicts=[
+        "Точка росы: в характеристиках «данных нет», в описании «измерение точки росы»",
+        "Наличие манометра: в характеристиках «Предустановленный», в описании «Отсутствие манометра»",
+    ])
+    card = CardGenerator(FakeLLM([data])).generate(product, [])
+    assert not any("Точка росы" in c for c in card.data_conflicts)
+    assert any("Наличие манометра" in c for c in card.data_conflicts)
+
+
 def test_llm_conflicts_ignored_without_specs(product):
     product.specs = {}
     data = make_card(key_specs=[], data_conflicts=["тип: в характеристиках «данных нет», в описании «датчик»"])
@@ -99,6 +109,24 @@ def test_long_description_trimmed_by_sentences(product):
     assert 800 <= card.quality.seo_description_length <= 1200
     assert card.seo_description.endswith(".")
     assert any("убраны последние предложения" in w for w in card.quality.warnings)
+
+
+def test_dropped_identity_rows_do_not_require_review(product):
+    product.description = "Мембрана из нержавеющей стали."
+    data = make_card(key_specs=[{"name": "Модель", "value": "ПД100", "source": "text"}])
+    card = CardGenerator(FakeLLM([data, data])).generate(product, [])
+    assert card.quality.warnings == []
+    assert card.quality.needs_review is False
+
+
+def test_heading_and_fallback_title_without_duplicate_brand():
+    from app.generator import fallback_title
+    from app.schemas import ProductInput
+
+    product = ProductInput(name="МЕГЕОН 70083", manufacturer="МЕГЕОН", product_type="токоизмерительные клещи")
+    assert fallback_title(product) == "Токоизмерительные клещи МЕГЕОН 70083"
+    card = CardGenerator(FakeLLM([make_card(), make_card()])).generate(product, [])
+    assert to_markdown(card).startswith("# Черновик карточки: МЕГЕОН 70083\n")
 
 
 def test_cut_to_words():

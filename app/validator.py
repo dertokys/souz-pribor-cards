@@ -24,6 +24,8 @@ _IDENTITY_RE = re.compile(
     r"тип( прибора| устройства| изделия| товара)?$)",
     re.IGNORECASE,
 )
+NOT_A_SPEC = "это не техническая характеристика"
+_META_NOTE_RE = re.compile(r"\s*\([^)]*(обычно|важн|типов|уточн|полный|в описании)[^)]*\)", re.IGNORECASE)
 _PLACEHOLDER_NAME_RE = re.compile(
     r"^(данные|нет данных|остальн|прочие|другие|иные)|отсутствующ|типовой параметр", re.IGNORECASE
 )
@@ -143,11 +145,20 @@ class Report:
     spec_warnings: list[str] = field(default_factory=list)
 
 
+def _base_key(key: str) -> str:
+    return norm(re.sub(r"\(.*?\)", "", key).split(",")[0])
+
+
 def _find_spec_key(source_key: str, specs: dict[str, str]) -> str | None:
     if source_key in specs:
         return source_key
     target = norm(source_key)
-    return next((k for k in specs if norm(k) == target), None)
+    exact = next((k for k in specs if norm(k) == target), None)
+    if exact is not None:
+        return exact
+    base = _base_key(source_key)
+    matches = [k for k in specs if base and _base_key(k) == base]
+    return matches[0] if len(matches) == 1 else None
 
 
 def stems(text: str) -> set[str]:
@@ -167,7 +178,8 @@ def supported_by_text(value: str, text: str) -> bool:
 
 
 def _spec_line(name: str, key: str, value: str, status: str) -> SpecLine:
-    display = key if "," in key else name
+    short, full = (re.sub(r"[\W_]", "", norm(x)) for x in (name, key))
+    display = key if status == "corrected" or (short != full and (short in full or "," in key)) else name
     return SpecLine(name=display, value=value, source=f"specs:{key}", status=status)
 
 
@@ -177,12 +189,12 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
 
     for spec in card.key_specs:
         source = spec.source.strip()
-        name = spec.name.strip()
+        name = _META_NOTE_RE.sub("", spec.name).strip()
         if not name or name.lower() in {"none", NO_DATA} or _PLACEHOLDER_NAME_RE.search(name):
             continue
         name = name[:1].upper() + name[1:]
         if _IDENTITY_RE.match(name):
-            report.issues.append(f"key_specs «{name}»: это не техническая характеристика, убери её из key_specs")
+            report.issues.append(f"key_specs «{name}»: {NOT_A_SPEC}, убери её из key_specs")
             continue
 
         if source.lower() == "none":
