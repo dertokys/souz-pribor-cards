@@ -96,6 +96,8 @@ def parse_product(raw: str | bytes | dict) -> tuple[ProductInput, list[MissingFi
         if text is None or isinstance(value, list):
             errors.append(f"{name}: ожидается строка")
             continue
+        if name == "description" and isinstance(value, str):
+            text = "\n".join(" ".join(line.split()) for line in value.splitlines() if line.strip())
         fields[name] = text
 
     specs = _normalize_specs(data.get("specs"), errors, missing)

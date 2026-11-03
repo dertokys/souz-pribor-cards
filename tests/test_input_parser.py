@@ -73,3 +73,19 @@ def test_no_specs_is_missing_not_error():
 def test_specs_as_list_of_pairs():
     product, _ = parse_product({"name": "x", "specs": [{"name": "IP", "value": "IP65"}]})
     assert product.specs == {"IP": "IP65"}
+
+
+def test_description_keeps_line_breaks():
+    product, _ = parse_product({"name": "x", "description": "Первая   строка\n\n  Параметр: 5 В  \nТретья"})
+    assert product.description == "Первая строка\nПараметр: 5 В\nТретья"
+
+
+def test_conflict_found_through_full_parse_path():
+    from pathlib import Path
+
+    from app.validator import find_conflicts
+
+    raw = Path(__file__).resolve().parent.parent.joinpath("examples/input/oven-pd100-di1-0-115-0-5.json").read_bytes()
+    product, _ = parse_product(raw)
+    texts = [c.text for c in find_conflicts(product)]
+    assert any(t.startswith("Среднее время наработки на отказ") for t in texts)
