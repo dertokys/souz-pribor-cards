@@ -178,3 +178,22 @@ def test_model_name_numbers_cannot_become_specs_in_text(product):
     decoded = make_card(seo_description=make_description("Температура среды до 115 °С. "))
     card = CardGenerator(FakeLLM([decoded, decoded])).generate(product, [])
     assert "115 °С" not in card.seo_description
+
+
+def test_meta_sentence_removed_if_not_repaired(product):
+    data = make_card(seo_description=make_description("В описании нет подробных параметров корпуса. "))
+    card = CardGenerator(FakeLLM([data, data])).generate(product, [])
+    assert "В описании" not in card.seo_description
+    assert any("служебное предложение" in w for w in card.quality.warnings)
+
+
+def test_duplicate_queries_removed(product):
+    data = make_card(search_queries=["пд100", "ПД100", "датчик давления овен", "преобразователь давления овен"])
+    card = CardGenerator(FakeLLM([data, data])).generate(product, [])
+    assert card.search_queries == ["пд100", "датчик давления овен", "преобразователь давления овен"]
+
+
+def test_markdown_table_escapes_emphasis():
+    from app.render import _cell
+
+    assert _cell("MINI: G1/8*, G1/4_x | y") == r"MINI: G1/8\*, G1/4\_x \| y"

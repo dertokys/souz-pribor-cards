@@ -27,7 +27,23 @@ _IDENTITY_RE = re.compile(
 )
 _NO_DATA_PREFIX_RE = re.compile(r"^\s*(данных нет|нет данных)\s*[—–:\-]\s*", re.IGNORECASE)
 NOT_A_SPEC = "это не техническая характеристика"
-_META_NOTE_RE = re.compile(r"\s*\([^)]*(обычно|важн|типов|уточн|полный|в описании)[^)]*\)", re.IGNORECASE)
+_META_NOTE_RE = re.compile(
+    r"\s*\([^)]*(обычно|важн|типов|уточн|полный|в описании|имени|наименовани|информаци)[^)]*\)", re.IGNORECASE
+)
+SUSPICIOUS_VALUE_RE = re.compile(
+    r"игнорируй|ignore\s+(all|previous|the)|напиши\s+в\s|инструкци\w*\s+для|\bруб\b|руб\.|₽|\bцена\b|скидк",
+    re.IGNORECASE,
+)
+META_STRONG_RE = re.compile(
+    r"(входн|исходн)\w*\s+данн\w*|(в|во)\s+(описании|спецификации|наименовании)\s+(нет|не\s|указан|содерж|приведен)"
+    r"|не\s+(указан|приведен|перечислен)\w*|уточня\w*\s+(у|в)\s",
+    re.IGNORECASE,
+)
+META_TEXT_RE = re.compile(
+    r"\b(в|во|по|из)\s+(описани|спецификаци|наименовани|исходных данн|входных данн|данных спецификаци)\w*"
+    r"|входные данные|не\s+(указан|приведен|перечислен)\w*|не содерж\w*\s+(в|во)\b|уточня\w*\s+(у|в)\s",
+    re.IGNORECASE,
+)
 _PLACEHOLDER_NAME_RE = re.compile(
     r"^(данные|нет данных|остальн|прочие|другие|иные)|отсутствующ|типовой параметр", re.IGNORECASE
 )
@@ -108,27 +124,46 @@ def find_conflicts(product: ProductInput) -> list[Conflict]:
     return conflicts
 
 
+def _compact(text: str) -> str:
+    return re.sub(r"[\W_]", "", text.lower().translate(_LOOKALIKES))
+
+
 class NumberCheck:
     def __init__(self, product: ProductInput):
-        self.identifiers = [product.name.lower().translate(_LOOKALIKES)] if product.name else []
+        self.identifiers = [_compact(product.name)] if product.name else []
         description = product.description
-        for conflict in find_conflicts(product):
+        self.conflicts = find_conflicts(product)
+        for conflict in self.conflicts:
             description = description.replace(conflict.line, " ")
         parts = [product.manufacturer, product.product_type, product.category, description]
         for key, value in product.specs.items():
             parts.extend([key, value])
         self.allowed = numbers(self.strip_identifiers(" ".join(parts)))
 
-    def strip_identifiers(self, text: str) -> str:
-        def replace(match: re.Match) -> str:
-            token = match.group(0)
-            if _LETTER_RE.search(token) and any(ch.isdigit() for ch in token):
-                key = token.lower().translate(_LOOKALIKES)
-                if any(key in identifier for identifier in self.identifiers):
-                    return " "
-            return token
+    def _is_identifier(self, token: str) -> bool:
+        if not (_LETTER_RE.search(token) and any(ch.isdigit() for ch in token)):
+            return False
+        key = _compact(token)
+        return len(key) >= 3 and any(key in identifier for identifier in self.identifiers)
 
-        return _TOKEN_RE.sub(replace, text)
+    def strip_identifiers(self, text: str) -> str:
+        tokens = list(_TOKEN_RE.finditer(text))
+        spans = []
+        i = 0
+        while i < len(tokens):
+            if i + 1 < len(tokens):
+                gap = text[tokens[i].end():tokens[i + 1].start()]
+                pair = tokens[i].group(0) + tokens[i + 1].group(0)
+                if len(gap) <= 2 and not gap.strip(" -–") and self._is_identifier(pair):
+                    spans.append((tokens[i].start(), tokens[i + 1].end()))
+                    i += 2
+                    continue
+            if self._is_identifier(tokens[i].group(0)):
+                spans.append(tokens[i].span())
+            i += 1
+        for start, end in reversed(spans):
+            text = text[:start] + " " + text[end:]
+        return text
 
     def __call__(self, text: str) -> list[str]:
         found = {_canon_number(n) for n in _NUMBER_RE.findall(self.strip_identifiers(text))}
@@ -163,7 +198,11 @@ def _find_spec_key(source_key: str, specs: dict[str, str]) -> str | None:
     if exact is not None:
         return exact
     base = _base_key(source_key)
-    matches = [k for k in specs if base and _base_key(k) == base]
+    if not base:
+        return None
+    matches = [k for k in specs if _base_key(k) == base]
+    if not matches:
+        matches = [k for k in specs if ":" in k and _base_key(k.rsplit(":", 1)[1]) == base]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -195,7 +234,8 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
 
     for spec in card.key_specs:
         source = spec.source.strip()
-        name = _NO_DATA_PREFIX_RE.sub("", _META_NOTE_RE.sub("", spec.name)).strip()
+        name = _NO_DATA_PREFIX_RE.sub("", _META_NOTE_RE.sub("", spec.name))
+        name = name.replace("‐", "-").replace("‑", "-").replace("\xa0", " ").strip()
         if not name or name.lower() in {"none", NO_DATA} or _PLACEHOLDER_NAME_RE.search(name):
             continue
         name = name[:1].upper() + name[1:]
@@ -227,6 +267,11 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
                 continue
             seen.add(key)
             original = product.specs[key]
+            if SUSPICIOUS_VALUE_RE.search(original):
+                report.spec_warnings.append(
+                    f"Характеристика «{key}» не включена в карточку: значение похоже на инструкцию или коммерческие данные — «{original[:120]}»"
+                )
+                continue
             status = "ok"
             if norm(spec.value) not in norm(original):
                 status = "corrected"
@@ -238,6 +283,8 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
 
         if source.lower() in {"text", "description"}:
             value = spec.value.strip()
+            if SUSPICIOUS_VALUE_RE.search(value):
+                continue
             if not supported_by_text(value, source_text):
                 report.issues.append(
                     f"key_specs «{name}»: значение «{value}» не найдено в описании или типе товара — "
@@ -268,6 +315,14 @@ def check_texts(card: LLMCard, check: NumberCheck, report: Report) -> None:
                 f"(числа из маркировки модели и из противоречащих строк описания не считаются) — убери их"
             )
 
+    for name in ("seo_title", "seo_description", "commercial.summary"):
+        match = META_TEXT_RE.search(fields[name])
+        if match:
+            report.issues.append(
+                f"{name}: служебная фраза о данных («{match.group(0)}») — это публичный текст, "
+                f"пиши о приборе, а не об описании или спецификации"
+            )
+
 
 def check_format(card: LLMCard, report: Report) -> None:
     title_len = len(card.seo_title.strip())
@@ -280,9 +335,9 @@ def check_format(card: LLMCard, report: Report) -> None:
     if not DESCRIPTION_MIN <= desc_len <= DESCRIPTION_MAX:
         report.issues.append(f"seo_description: {desc_len} символов, нужно {DESCRIPTION_MIN}–{DESCRIPTION_MAX}")
 
-    queries = [q for q in card.search_queries if q.strip()]
+    queries = {q.strip().lower() for q in card.search_queries if q.strip()}
     if not QUERIES_MIN <= len(queries) <= QUERIES_MAX:
-        report.issues.append(f"search_queries: {len(queries)} шт., нужно {QUERIES_MIN}–{QUERIES_MAX}")
+        report.issues.append(f"search_queries: {len(queries)} разных запросов, нужно {QUERIES_MIN}–{QUERIES_MAX}")
 
     if not card.commercial.summary.strip():
         report.issues.append("commercial.summary пустой")

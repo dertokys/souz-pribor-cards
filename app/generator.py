@@ -17,10 +17,10 @@ from .prompts import (
 )
 from .schemas import CardResult, Commercial, LLMCard, MissingField, ProductInput, ProductRef, Quality
 from .validator import (
+    META_STRONG_RE,
     NOT_A_SPEC,
     NumberCheck,
     Report,
-    find_conflicts,
     fix_mixed_script,
     mixed_script_words,
     norm,
@@ -58,6 +58,16 @@ def _fix_strings(value, keep: set[str]):
     return value
 
 
+def unique_ci(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result = []
+    for item in items:
+        if item.lower() not in seen:
+            seen.add(item.lower())
+            result.append(item)
+    return result
+
+
 def issue_kind(issue: str) -> str:
     return issue.split(":", 1)[0]
 
@@ -86,8 +96,11 @@ def drop_ungrounded_sentences(text: str, check: NumberCheck, field: str, warning
         kept = []
         for sentence in sentences:
             bad = check(sentence)
+            meta = META_STRONG_RE.search(sentence)
             if bad:
                 warnings.append(f"{field}: удалено предложение с неподтверждёнными числами ({', '.join(bad)}): «{sentence}»")
+            elif meta:
+                warnings.append(f"{field}: удалено служебное предложение о данных («{meta.group(0)}»): «{sentence}»")
             else:
                 kept.append(sentence)
         if kept:
@@ -127,8 +140,9 @@ def finalize(
     model: str,
     repaired_issues: list[str],
     notes: list[str] | None = None,
+    check: NumberCheck | None = None,
 ) -> CardResult:
-    check = NumberCheck(product)
+    check = check or NumberCheck(product)
     warnings = list(notes or []) + list(report.spec_warnings)
     keep = source_words(
         product.name, product.manufacturer, product.product_type, product.category, product.description,
@@ -154,7 +168,8 @@ def finalize(
     if not DESCRIPTION_MIN <= len(description) <= DESCRIPTION_MAX:
         warnings.append(f"seo_description: {len(description)} символов вместо {DESCRIPTION_MIN}–{DESCRIPTION_MAX}")
 
-    queries = drop_ungrounded_items(card.search_queries, check, "search_queries", warnings)[:QUERIES_MAX]
+    queries = drop_ungrounded_items(card.search_queries, check, "search_queries", warnings)
+    queries = unique_ci(queries)[:QUERIES_MAX]
     if len(queries) < QUERIES_MIN:
         warnings.append(f"search_queries: осталось {len(queries)} шт. вместо {QUERIES_MIN}–{QUERIES_MAX}")
 
@@ -179,7 +194,7 @@ def finalize(
             known.add(norm(spec.name))
             missing.append(MissingField(field=spec.name, reason="важный для выбора параметр отсутствует во входных данных"))
 
-    conflicts = [c.text for c in find_conflicts(product)]
+    conflicts = [c.text for c in check.conflicts]
     found_keys = [norm(issue_kind(c)) for c in conflicts]
     if product.specs and product.description:
         for conflict in card.data_conflicts:
@@ -260,4 +275,4 @@ class CardGenerator:
         card, report = best
         remaining = {issue_kind(i) for i in report.issues}
         repaired = [i for i in sent_for_repair if issue_kind(i) not in remaining]
-        return finalize(card, report, product, missing, attempts, self.llm.model, repaired, notes)
+        return finalize(card, report, product, missing, attempts, self.llm.model, repaired, notes, check)
