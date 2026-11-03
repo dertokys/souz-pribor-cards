@@ -5,6 +5,8 @@ from .schemas import MissingField, ProductInput
 
 TEXT_FIELDS = ("name", "manufacturer", "product_type", "category", "sku", "url", "description")
 EMPTY_MARKERS = {"", "-", "—", "–", "н/д", "нет данных", "данных нет", "null", "none", "n/a"}
+MAX_BODY_BYTES = 1_000_000
+MAX_CONTENT_CHARS = 30_000
 
 
 class InputError(ValueError):
@@ -66,6 +68,8 @@ def _normalize_specs(raw: Any, errors: list[str], missing: list[MissingField]) -
 
 
 def parse_product(raw: str | bytes | dict) -> tuple[ProductInput, list[MissingField]]:
+    if isinstance(raw, (str, bytes)) and len(raw) > MAX_BODY_BYTES:
+        raise InputError(f"Слишком большой запрос: больше {MAX_BODY_BYTES // 1000} КБ")
     if isinstance(raw, bytes):
         try:
             raw = raw.decode("utf-8-sig")
@@ -104,6 +108,9 @@ def parse_product(raw: str | bytes | dict) -> tuple[ProductInput, list[MissingFi
 
     if not fields.get("name"):
         errors.insert(0, "name: обязательное поле — без названия товара карточку не собрать")
+    size = len(fields.get("description", "")) + sum(len(k) + len(v) for k, v in specs.items())
+    if size > MAX_CONTENT_CHARS:
+        errors.append(f"описание и характеристики занимают {size} символов, максимум {MAX_CONTENT_CHARS} — сократите описание")
     if errors:
         raise InputError("Входные данные не прошли проверку", errors)
 

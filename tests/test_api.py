@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from app import service
 from app.config import get_settings
 from app.generator import CardGenerator
+from app.input_parser import parse_product
 from app.llm import LLMConfigError, LLMUnavailable, OpenAICompatibleClient
 from app.main import app
 
@@ -81,3 +83,44 @@ def test_invalid_number_in_env_gives_config_error(monkeypatch):
         service.get_generator.cache_clear()
     assert r.status_code == 500
     assert "LLM_MAX_ATTEMPTS" in r.json()["error"]
+
+
+def test_cli_continues_after_product_error(monkeypatch, tmp_path, capsys):
+    from app import cli
+    from app.llm import LLMBadResponse
+
+    files = []
+    for i in range(2):
+        f = tmp_path / f"p{i}.json"
+        f.write_text(json.dumps(PRODUCT, ensure_ascii=False), encoding="utf-8")
+        files.append(str(f))
+    calls = []
+
+    def fake(raw):
+        calls.append(raw)
+        if len(calls) == 1:
+            raise LLMBadResponse("плохой JSON")
+        return CardGenerator(FakeLLM([make_card()])).generate(*parse_product(raw))
+
+    monkeypatch.setattr(cli, "generate_card", fake)
+    monkeypatch.setattr(sys, "argv", ["cli", *files, "-o", str(tmp_path / "out")])
+    assert cli.main() == 3
+    assert len(calls) == 2
+    assert (tmp_path / "out" / "p1.md").exists()
+
+
+def test_config_error_clears_cached_generator(monkeypatch):
+    calls = []
+
+    class Broken:
+        def generate(self, product, missing):
+            calls.append(1)
+            raise LLMConfigError("ключ отклонён")
+
+    service.get_generator.cache_clear()
+    monkeypatch.setattr(service, "OpenAICompatibleClient", lambda settings: None)
+    service.get_generator()
+    assert service.get_generator.cache_info().currsize == 1
+    with pytest.raises(LLMConfigError):
+        service.generate_card(json.dumps(PRODUCT, ensure_ascii=False), generator=Broken())
+    assert service.get_generator.cache_info().currsize == 0

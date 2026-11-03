@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from .input_parser import InputError
-from .llm import LLMError
+from .llm import LLMConfigError, LLMError, LLMRateLimited
 from .render import to_markdown
 from .service import generate_card
 
@@ -32,9 +32,13 @@ def main() -> int:
             print(f"[{path}] {e.message}{details}", file=sys.stderr)
             exit_code = 2
             continue
+        except (LLMConfigError, LLMRateLimited) as e:
+            print(f"[{path}] Ошибка LLM: {e.message} — обработка остановлена", file=sys.stderr)
+            return 3
         except LLMError as e:
             print(f"[{path}] Ошибка LLM: {e.message}", file=sys.stderr)
-            return 3
+            exit_code = 3
+            continue
 
         markdown = to_markdown(card)
         if args.out:

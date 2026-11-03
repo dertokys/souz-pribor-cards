@@ -18,4 +18,8 @@ def get_generator() -> CardGenerator:
 
 def generate_card(raw: str | bytes | dict, generator: CardGenerator | None = None) -> CardResult:
     product, missing = parse_product(raw)
-    return (generator or get_generator()).generate(product, missing)
+    try:
+        return (generator or get_generator()).generate(product, missing)
+    except LLMConfigError:
+        get_generator.cache_clear()
+        raise

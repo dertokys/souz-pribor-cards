@@ -9,7 +9,9 @@ STATUS_LABELS = {
 
 
 def _cell(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", " ")
+    for ch in "\\|*_`":
+        text = text.replace(ch, "\\" + ch)
+    return text.replace("\n", " ")
 
 
 def review_reason(card: CardResult) -> str:

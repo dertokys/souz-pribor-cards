@@ -97,6 +97,7 @@
 const $ = (id) => document.getElementById(id);
 let inputMode = "fields";
 let examples = {};
+let extraFields = {};
 
 function switchTabs(groupId, prefix, onChange) {
   $(groupId).addEventListener("click", (e) => {
@@ -123,6 +124,7 @@ function fieldsToJson() {
     else if (line.trim()) specs[line.trim()] = "";
   });
   return {
+    ...extraFields,
     name: $("f-name").value.trim(),
     manufacturer: $("f-manufacturer").value.trim(),
     product_type: $("f-type").value.trim(),
@@ -132,6 +134,8 @@ function fieldsToJson() {
 }
 
 function jsonToFields(data) {
+  extraFields = {};
+  for (const key of ["category", "sku", "url"]) if (data[key]) extraFields[key] = data[key];
   $("f-name").value = data.name || "";
   $("f-manufacturer").value = data.manufacturer || "";
   $("f-type").value = data.product_type || "";

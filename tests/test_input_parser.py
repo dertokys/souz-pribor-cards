@@ -89,3 +89,9 @@ def test_conflict_found_through_full_parse_path():
     product, _ = parse_product(raw)
     texts = [c.text for c in find_conflicts(product)]
     assert any(t.startswith("Среднее время наработки на отказ") for t in texts)
+
+
+def test_too_large_input_rejected():
+    with pytest.raises(InputError) as e:
+        parse_product({"name": "x", "description": "а" * 30_001})
+    assert any("максимум" in d for d in e.value.details)
