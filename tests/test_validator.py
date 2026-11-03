@@ -1,5 +1,6 @@
 from app.schemas import LLMCard
-from app.validator import find_conflicts, fix_mixed_script, norm, numbers, source_numbers, ungrounded_numbers, validate
+from app.schemas import ProductInput
+from app.validator import NumberCheck, find_conflicts, fix_mixed_script, mixed_script_words, norm, numbers, validate
 
 from .conftest import make_card, make_description
 
@@ -18,11 +19,14 @@ def test_fix_mixed_script():
     assert fix_mixed_script("защитa от влаги, DPt100Ω, SSR") == "защита от влаги, DPt100Ω, SSR"
     assert fix_mixed_script("ОВЕН ПД100") == "ОВЕН ПД100"
     assert fix_mixed_script("ПИД‑регулирование") == "ПИД-регулирование"
+    assert fix_mixed_script("Autoniсs") == "Autonics"
+    assert mixed_script_words(fix_mixed_script("ovен")) == ["оvен"]
 
 
 def test_placeholder_spec_names_dropped(product):
     card = make_card(key_specs=[
         {"name": "Отсутствующий типовой параметр", "value": "данных нет", "source": "none"},
+        {"name": "Остальные важные параметры", "value": "данных нет", "source": "none"},
         {"name": "диапазон измерений", "value": "данных нет", "source": "none"},
     ])
     lines = validate(LLMCard(**card), product).spec_lines
@@ -30,10 +34,27 @@ def test_placeholder_spec_names_dropped(product):
 
 
 def test_ungrounded_numbers(product):
-    allowed = source_numbers(product)
-    assert ungrounded_numbers("сигнал 4...20 мА, до 1 МПа", allowed) == []
-    assert ungrounded_numbers("погрешность 0,25 %, IP67", allowed) == ["67", "0.25"]
-    assert ungrounded_numbers("наработка 500000 ч", allowed) == []
+    check = NumberCheck(product)
+    assert check("сигнал 4...20 мА, до 1 МПа") == []
+    assert check("погрешность 0,25 %, IP67") == ["67", "0.25"]
+    assert check("наработка 500000 ч") == []
+    assert check("наработка 500 000 ч") == []
+
+
+def test_numbers_from_model_name_only_inside_designation(product):
+    check = NumberCheck(product)
+    assert check("ОВЕН ПД100-ДИ1,0-115-0,5 и датчик пд100") == []
+    assert check("температура среды до 115 °С") == ["115"]
+
+
+def test_conflicting_description_value_not_allowed(product):
+    check = NumberCheck(product)
+    assert check("наработка на отказ 50 000 ч") == ["50"]
+    assert check("наработка на отказ 50000 ч") == ["50000"]
+
+
+def test_adjacent_numbers_not_merged(product):
+    assert NumberCheck(product)("корпус IP65 500 раз") == []
 
 
 def test_clean_card_has_no_issues(product):
@@ -92,17 +113,43 @@ def test_identity_fields_are_not_specs(product):
     card = make_card(key_specs=[
         {"name": "Производитель", "value": "данных нет", "source": "none"},
         {"name": "Модель", "value": "ПД100", "source": "text"},
+        {"name": "Категория прибора", "value": "данных нет", "source": "none"},
+        {"name": "Тип выхода", "value": "данных нет", "source": "none"},
     ])
     report = validate(LLMCard(**card), product)
-    assert report.spec_lines == []
-    assert sum("не техническая характеристика" in i for i in report.issues) == 2
+    assert [s.name for s in report.spec_lines] == ["Тип выхода"]
+    assert sum("не техническая характеристика" in i for i in report.issues) == 3
 
 
 def test_find_conflicts_between_specs_and_description(product):
     conflicts = find_conflicts(product)
     assert len(conflicts) == 1
-    assert conflicts[0].startswith("Среднее время наработки на отказ")
-    assert "500 000" in conflicts[0] and "50 000" in conflicts[0]
+    assert conflicts[0].text.startswith("Среднее время наработки на отказ")
+    assert "500 000" in conflicts[0].text and "50 000" in conflicts[0].text
+
+
+def test_shorter_description_value_is_not_conflict():
+    product = ProductInput(
+        name="TC4S",
+        specs={"Гистерезис": "1…100℃ (0.1…50.0℃) изменяемый", "Индикатор": "светодиодный"},
+        description="Гистерезис: 1…100℃\nИндикатор: ЖК",
+    )
+    assert find_conflicts(product) == []
+
+
+def test_none_for_existing_spec_gets_real_value(product):
+    card = make_card(key_specs=[{"name": "Напряжение питания", "value": "данных нет", "source": "none"}])
+    report = validate(LLMCard(**card), product)
+    assert report.spec_lines[0].value == "12…36 В постоянного тока"
+    assert report.spec_lines[0].status == "corrected"
+    assert report.issues == []
+
+
+def test_spec_name_keeps_units_from_key():
+    product = ProductInput(name="КМС", specs={"Время измерения параметров, с, не более": "1"})
+    card = make_card(key_specs=[{"name": "Время измерения параметров", "value": "1", "source": "specs:Время измерения параметров, с, не более"}])
+    line = validate(LLMCard(**card), product).spec_lines[0]
+    assert line.name == "Время измерения параметров, с, не более"
 
 
 def test_invented_number_in_text_is_issue(product):

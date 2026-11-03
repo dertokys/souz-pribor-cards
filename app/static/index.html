@@ -181,7 +181,12 @@ const STATUS = { ok: "", corrected: "исправлено по входу", from
 function renderCard(card) {
   const q = card.quality;
   let html = "";
-  if (q.needs_review) html += `<div class="notice">Требует проверки: автоматическая проверка внесла правки (${q.warnings.length}). Подробности внизу.</div>`;
+  if (q.needs_review) {
+    const reasons = [];
+    if (card.data_conflicts.length) reasons.push(`противоречия во входных данных (${card.data_conflicts.length})`);
+    if (q.warnings.length) reasons.push(`автоматические правки (${q.warnings.length})`);
+    html += `<div class="notice">Требует проверки: ${reasons.join("; ")}. Подробности внизу.</div>`;
+  }
   html += block("SEO-заголовок", `${q.seo_title_length}/70`, card.seo_title, `<div class="text">${esc(card.seo_title)}</div>`);
   html += block("SEO-описание", `${q.seo_description_length} симв., норма 800–1200`, card.seo_description, `<div class="text">${esc(card.seo_description)}</div>`);
   const specsText = card.key_specs.map((s) => `${s.name}: ${s.value}`).join("\n");
@@ -191,7 +196,7 @@ function renderCard(card) {
   const c = card.commercial;
   const cText = `${c.summary}\n\nКому подходит:\n${c.target_customers.map((x) => "- " + x).join("\n")}\n\nЗадачи:\n${c.tasks.map((x) => "- " + x).join("\n")}`;
   html += block("Для менеджера", "", cText, `<div class="text">${esc(c.summary)}</div><b>Кому подходит</b><ul>${c.target_customers.map((x) => `<li>${esc(x)}</li>`).join("")}</ul><b>Задачи</b><ul>${c.tasks.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
-  const missing = card.missing_fields.map((m) => `<li><code>${esc(m.field)}</code> — ${esc(m.reason)}</li>`).concat(card.key_specs.filter((s) => s.status === "no_data").map((s) => `<li>${esc(s.name)} — данных нет</li>`));
+  const missing = card.missing_fields.map((m) => `<li>${esc(m.field)} — ${esc(m.reason)}</li>`);
   html += block("Отсутствующие данные", "", "", missing.length ? `<ul>${missing.join("")}</ul>` : `<span class="good">Основные поля заполнены</span>`);
   if (card.data_conflicts.length) html += block("Противоречия во входных данных", "", "", `<ul>${card.data_conflicts.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
   const repaired = q.repaired_issues.length ? `<div class="hint" style="margin-top:8px">Исправлено моделью после повторного запроса:</div><ul class="hint">${q.repaired_issues.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";

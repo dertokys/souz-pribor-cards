@@ -11,22 +11,49 @@ _LOOKALIKES = str.maketrans({
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
 _THOUSANDS_RE = re.compile(r"(?<=\d)[ \xa0](?=\d{3}(?!\d))")
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+(?=[А-ЯЁA-Z0-9«\"])")
-
-
+_TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]+(?:[-.,/×][0-9A-Za-zА-Яа-яЁё]+)*")
+_LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
 _LATIN_TO_CYRILLIC = str.maketrans("aeopcxyAEOPCXBKMHT", "аеорсхуАЕОРСХВКМНТ")
-_MIXED_WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё]+")
+_CYRILLIC_TO_LATIN = str.maketrans("аеорсхуАЕОРСХВКМНТ", "aeopcxyAEOPCXBKMHT")
+_WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё]+")
+_STEM_RE = re.compile(r"[a-zа-яё]{3,}", re.IGNORECASE)
+_DESCRIPTION_PAIR_RE = re.compile(r"^\s*([^:\n]{3,80}):\s*(.+?)\s*$", re.MULTILINE)
+
+_IDENTITY_RE = re.compile(
+    r"^(производитель|бренд|марка|модель|название|наименование|артикул|категория|"
+    r"тип( прибора| устройства| изделия| товара)?$)",
+    re.IGNORECASE,
+)
+_PLACEHOLDER_NAME_RE = re.compile(
+    r"^(данные|нет данных|остальн|прочие|другие|иные)|отсутствующ|типовой параметр", re.IGNORECASE
+)
+
+
+def _is_cyrillic(ch: str) -> bool:
+    return "а" <= ch.lower() <= "я" or ch in "ёЁ"
+
+
+def _fix_word(word: str) -> str:
+    cyrillic = sum(_is_cyrillic(ch) for ch in word)
+    if cyrillic in (0, len(word)):
+        return word
+    if cyrillic * 2 >= len(word):
+        return word.translate(_LATIN_TO_CYRILLIC)
+    return word.translate(_CYRILLIC_TO_LATIN)
 
 
 def fix_mixed_script(text: str) -> str:
-    def fix(match: re.Match) -> str:
-        word = match.group(0)
-        cyrillic = sum("а" <= ch.lower() <= "я" or ch in "ёЁ" for ch in word)
-        if 0 < cyrillic < len(word) and cyrillic * 2 > len(word):
-            return word.translate(_LATIN_TO_CYRILLIC)
-        return word
-
     text = text.replace("‐", "-").replace("‑", "-").replace("\xa0", " ")
-    return _MIXED_WORD_RE.sub(fix, text)
+    return _WORD_RE.sub(lambda m: _fix_word(m.group(0)), text)
+
+
+def mixed_script_words(text: str) -> list[str]:
+    result = []
+    for word in _WORD_RE.findall(text):
+        cyrillic = sum(_is_cyrillic(ch) for ch in word)
+        if 0 < cyrillic < len(word) and word not in result:
+            result.append(word)
+    return result
 
 
 def norm(text: str) -> str:
@@ -47,17 +74,57 @@ def numbers(text: str) -> set[str]:
     return {_canon_number(n) for n in _NUMBER_RE.findall(text) + _NUMBER_RE.findall(joined)}
 
 
-def source_numbers(product: ProductInput) -> set[str]:
-    parts = [product.name, product.manufacturer, product.product_type, product.category, product.description]
-    for key, value in product.specs.items():
-        parts.extend([key, value])
-    return numbers(" ".join(parts))
+@dataclass
+class Conflict:
+    key: str
+    spec_value: str
+    description_value: str
+    line: str
+
+    @property
+    def text(self) -> str:
+        return f"{self.key}: в характеристиках «{self.spec_value}», в описании «{self.description_value.rstrip('.')}»"
 
 
-def ungrounded_numbers(text: str, allowed: set[str]) -> list[str]:
-    joined = _THOUSANDS_RE.sub("", text)
-    found = [_canon_number(n) for n in _NUMBER_RE.findall(joined)]
-    return sorted({n for n in found if n not in allowed}, key=lambda n: (len(n), n))
+def find_conflicts(product: ProductInput) -> list[Conflict]:
+    conflicts = []
+    for match in _DESCRIPTION_PAIR_RE.finditer(product.description):
+        key, desc_value = match.group(1), match.group(2)
+        spec_key = next((k for k in product.specs if norm(k) == norm(key)), None)
+        if spec_key is None:
+            continue
+        spec_value = product.specs[spec_key]
+        desc_numbers = numbers(desc_value)
+        if desc_numbers and not desc_numbers <= numbers(spec_value):
+            conflicts.append(Conflict(spec_key, spec_value, desc_value, match.group(0)))
+    return conflicts
+
+
+class NumberCheck:
+    def __init__(self, product: ProductInput):
+        self.identifiers = [product.name.lower().translate(_LOOKALIKES)] if product.name else []
+        description = product.description
+        for conflict in find_conflicts(product):
+            description = description.replace(conflict.line, " ")
+        parts = [product.manufacturer, product.product_type, product.category, description]
+        for key, value in product.specs.items():
+            parts.extend([key, value])
+        self.allowed = numbers(self.strip_identifiers(" ".join(parts)))
+
+    def strip_identifiers(self, text: str) -> str:
+        def replace(match: re.Match) -> str:
+            token = match.group(0)
+            if _LETTER_RE.search(token) and any(ch.isdigit() for ch in token):
+                key = token.lower().translate(_LOOKALIKES)
+                if any(key in identifier for identifier in self.identifiers):
+                    return " "
+            return token
+
+        return _TOKEN_RE.sub(replace, text)
+
+    def __call__(self, text: str) -> list[str]:
+        found = {_canon_number(n) for n in _NUMBER_RE.findall(self.strip_identifiers(text))}
+        return sorted((n for n in found if n not in self.allowed), key=lambda n: (len(n), n))
 
 
 def split_paragraphs(text: str) -> list[list[str]]:
@@ -83,22 +150,15 @@ def _find_spec_key(source_key: str, specs: dict[str, str]) -> str | None:
     return next((k for k in specs if norm(k) == target), None)
 
 
-IDENTITY_FIELDS = {
-    "производитель", "бренд", "марка", "модель", "название", "наименование",
-    "артикул", "тип", "тип прибора", "тип устройства", "категория",
-}
-_PLACEHOLDER_NAME_RE = re.compile(r"^(данные|нет данных)|отсутствующ|типовой параметр", re.IGNORECASE)
-_WORD_RE = re.compile(r"[a-zа-яё]{3,}", re.IGNORECASE)
-
-
 def stems(text: str) -> set[str]:
-    return {w.lower().translate(_LOOKALIKES)[:4] for w in _WORD_RE.findall(text)}
+    return {w.lower().translate(_LOOKALIKES)[:4] for w in _STEM_RE.findall(text)}
 
 
 def supported_by_text(value: str, text: str) -> bool:
     if not value.strip() or not text.strip():
         return False
-    if any(n not in numbers(text) for n in numbers(value)):
+    text_numbers = numbers(text)
+    if any(n not in text_numbers for n in numbers(value)):
         return False
     if norm(value) in norm(text):
         return True
@@ -106,19 +166,9 @@ def supported_by_text(value: str, text: str) -> bool:
     return bool(value_stems) and len(value_stems & stems(text)) / len(value_stems) >= 0.75
 
 
-_DESCRIPTION_PAIR_RE = re.compile(r"^\s*([^:\n]{3,80}):\s*(.+?)\s*$", re.MULTILINE)
-
-
-def find_conflicts(product: ProductInput) -> list[str]:
-    conflicts = []
-    for key, desc_value in _DESCRIPTION_PAIR_RE.findall(product.description):
-        spec_key = next((k for k in product.specs if norm(k) == norm(key)), None)
-        if spec_key is None:
-            continue
-        spec_value = product.specs[spec_key]
-        if numbers(spec_value) != numbers(desc_value):
-            conflicts.append(f"{spec_key}: в характеристиках «{spec_value}», в описании «{desc_value.rstrip('.')}»")
-    return conflicts
+def _spec_line(name: str, key: str, value: str, status: str) -> SpecLine:
+    display = key if "," in key else name
+    return SpecLine(name=display, value=value, source=f"specs:{key}", status=status)
 
 
 def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
@@ -131,17 +181,23 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
         if not name or name.lower() in {"none", NO_DATA} or _PLACEHOLDER_NAME_RE.search(name):
             continue
         name = name[:1].upper() + name[1:]
-        if name.lower() in IDENTITY_FIELDS:
+        if _IDENTITY_RE.match(name):
             report.issues.append(f"key_specs «{name}»: это не техническая характеристика, убери её из key_specs")
             continue
 
         if source.lower() == "none":
-            if name.lower() in seen:
+            key = _find_spec_key(name, product.specs)
+            if key is not None:
+                if key not in seen:
+                    seen.add(key)
+                    report.spec_lines.append(_spec_line(name, key, product.specs[key], "corrected"))
+                    report.spec_warnings.append(
+                        f"Характеристика «{name}»: модель пометила «{NO_DATA}», подставлено значение из входных данных"
+                    )
                 continue
-            seen.add(name.lower())
-            if _find_spec_key(name, product.specs):
-                report.issues.append(f"key_specs «{name}»: помечено «{NO_DATA}», но такая характеристика есть в specs")
-            report.spec_lines.append(SpecLine(name=name, value=NO_DATA, source="none", status="no_data"))
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                report.spec_lines.append(SpecLine(name=name, value=NO_DATA, source="none", status="no_data"))
             continue
 
         if source.lower().startswith("specs:"):
@@ -159,7 +215,7 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
                 report.spec_warnings.append(
                     f"Характеристика «{name}»: модель вернула «{spec.value}», заменено на исходное «{original}»"
                 )
-            report.spec_lines.append(SpecLine(name=name, value=original, source=f"specs:{key}", status=status))
+            report.spec_lines.append(_spec_line(name, key, original, status))
             continue
 
         if source.lower() in {"text", "description"}:
@@ -176,8 +232,7 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
         report.issues.append(f"key_specs «{name}»: недопустимый source «{source}» (нужно specs:<ключ>, text или none)")
 
 
-def check_texts(card: LLMCard, product: ProductInput, report: Report) -> None:
-    allowed = source_numbers(product)
+def check_texts(card: LLMCard, check: NumberCheck, report: Report) -> None:
     fields = {
         "seo_title": card.seo_title,
         "seo_description": card.seo_description,
@@ -188,9 +243,12 @@ def check_texts(card: LLMCard, product: ProductInput, report: Report) -> None:
     fields.update({f"search_queries[{i}]": q for i, q in enumerate(card.search_queries)})
 
     for name, text in fields.items():
-        bad = ungrounded_numbers(text, allowed)
+        bad = check(text)
         if bad:
-            report.issues.append(f"{name}: числа {', '.join(bad)} отсутствуют во входных данных — убери их")
+            report.issues.append(
+                f"{name}: числа {', '.join(bad)} не подтверждаются входными данными "
+                f"(числа из маркировки модели и из противоречащих строк описания не считаются) — убери их"
+            )
 
 
 def check_format(card: LLMCard, report: Report) -> None:
@@ -216,9 +274,9 @@ def check_format(card: LLMCard, report: Report) -> None:
         report.issues.append("commercial.tasks пустой")
 
 
-def validate(card: LLMCard, product: ProductInput) -> Report:
+def validate(card: LLMCard, product: ProductInput, check: NumberCheck | None = None) -> Report:
     report = Report()
     check_format(card, report)
     check_specs(card, product, report)
-    check_texts(card, product, report)
+    check_texts(card, check or NumberCheck(product), report)
     return report

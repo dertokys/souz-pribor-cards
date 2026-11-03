@@ -12,6 +12,15 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def review_reason(card: CardResult) -> str:
+    reasons = []
+    if card.data_conflicts:
+        reasons.append(f"противоречия во входных данных ({len(card.data_conflicts)})")
+    if card.quality.warnings:
+        reasons.append(f"автоматические правки ({len(card.quality.warnings)}), см. раздел «Проверка»")
+    return "; ".join(reasons)
+
+
 def to_markdown(card: CardResult) -> str:
     p = card.product
     title = " ".join(x for x in [p.manufacturer, p.name] if x)
@@ -22,7 +31,7 @@ def to_markdown(card: CardResult) -> str:
         lines += [" · ".join(meta), ""]
 
     if card.quality.needs_review:
-        lines += [f"> **Требует проверки:** автоматическая проверка внесла правки ({len(card.quality.warnings)}), см. раздел «Проверка».", ""]
+        lines += [f"> **Требует проверки:** {review_reason(card)}.", ""]
 
     lines += [
         f"## SEO-заголовок ({card.quality.seo_title_length} симв.)",
@@ -60,9 +69,7 @@ def to_markdown(card: CardResult) -> str:
     lines.append("")
 
     lines += ["## Отсутствующие данные", ""]
-    missing = [f"- `{m.field}` — {m.reason}" for m in card.missing_fields]
-    missing += [f"- {s.name} — {s.value}" for s in card.key_specs if s.status == "no_data"]
-    lines += missing or ["Все основные поля заполнены."]
+    lines += [f"- {m.field} — {m.reason}" for m in card.missing_fields] or ["Все основные поля заполнены."]
     lines.append("")
 
     if card.data_conflicts:
