@@ -21,9 +21,11 @@ def clean(text: str) -> str:
 def download_feed(path: Path) -> None:
     with httpx.stream("GET", FEED_URL, headers={"User-Agent": USER_AGENT}, timeout=120, follow_redirects=True) as r:
         r.raise_for_status()
-        with path.open("wb") as f:
+        partial = path.with_name(path.name + ".part")
+        with partial.open("wb") as f:
             for chunk in r.iter_bytes():
                 f.write(chunk)
+    partial.replace(path)
 
 
 def find_offer(feed_path: Path, offer_id: str) -> tuple[dict, dict]:
@@ -46,7 +48,7 @@ def cell_text(cell) -> str:
     blocks = cell.find_all(["p", "li"]) or [cell]
     parts = []
     for block in blocks:
-        parts.extend(clean(line) for line in block.get_text("").split("\n"))
+        parts.extend(clean(line).strip(" ,;") for line in block.get_text("").split("\n"))
     return "; ".join(p for p in parts if p)
 
 
