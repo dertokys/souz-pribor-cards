@@ -140,3 +140,20 @@ def test_same_key_in_different_sections_kept():
 def test_parse_description_skips_tables():
     text = parse_description(BeautifulSoup(PAGE, "html.parser"))
     assert text == "Преобразователь давления для сложных условий.\nЗащита от гидроударов"
+
+
+VARIANTS = """
+<div id="specifications"><table>
+  <tr><td>Типоразмер</td><td>MINI</td><td>MIDI</td><td>MAXI</td></tr>
+  <tr><td>Тип выхода</td><td>реле</td><td>транзистор</td><td>реле</td></tr>
+  <tr><td>Ток, А</td><td>1</td><td>2</td><td>3</td></tr>
+</table></div>
+"""
+
+
+def test_digitless_data_row_is_not_header():
+    specs = parse_specs(BeautifulSoup(VARIANTS, "html.parser"))
+    assert specs == {
+        "Тип выхода": "MINI: реле; MIDI: транзистор; MAXI: реле",
+        "Ток, А": "MINI: 1; MIDI: 2; MAXI: 3",
+    }

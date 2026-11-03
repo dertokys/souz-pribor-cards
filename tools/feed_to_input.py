@@ -159,7 +159,8 @@ def parse_table(table, specs: dict[str, str], key_sections: dict[str, str]) -> N
 
         first, rest = row[0], row[1:]
         if len(set(rest)) > 1:
-            if not any(ch.isdigit() for c in row for ch in c):
+            looks_like_header = not any(ch.isdigit() for c in row for ch in c)
+            if looks_like_header and (header is None or just_sectioned or first.lower() in SKIP_SPEC_KEYS):
                 header = grid_row
                 if not just_sectioned:
                     section = ""
