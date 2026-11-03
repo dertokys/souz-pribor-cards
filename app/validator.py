@@ -13,17 +13,19 @@ _THOUSANDS_RE = re.compile(r"(?<=\d)[ \xa0](?=\d{3}(?!\d))")
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+(?=[А-ЯЁA-Z0-9«\"])")
 _TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]+(?:[-.,/×][0-9A-Za-zА-Яа-яЁё]+)*")
 _LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
-_LATIN_TO_CYRILLIC = str.maketrans("aeopcxyAEOPCXBKMHT", "аеорсхуАЕОРСХВКМНТ")
-_CYRILLIC_TO_LATIN = str.maketrans("аеорсхуАЕОРСХВКМНТ", "aeopcxyAEOPCXBKMHT")
+_LATIN_TO_CYRILLIC = str.maketrans("aeopcxymkAEOPCXBKMHT", "аеорсхумкАЕОРСХВКМНТ")
+_CYRILLIC_TO_LATIN = str.maketrans("аеорсхумкАЕОРСХВКМНТ", "aeopcxymkAEOPCXBKMHT")
 _WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё]+")
 _STEM_RE = re.compile(r"[a-zа-яё]{3,}", re.IGNORECASE)
 _DESCRIPTION_PAIR_RE = re.compile(r"^\s*([^:\n]{3,80}):\s*(.+?)\s*$", re.MULTILINE)
 
 _IDENTITY_RE = re.compile(
     r"^(производитель|бренд|марка|модель|название|наименование|артикул|категория|"
-    r"тип( прибора| устройства| изделия| товара)?$)",
+    r"тип( прибора| устройства| изделия| товара)?$|"
+    r"гаранти|цена|стоимость|срок поставки|наличие на складе|доставка)",
     re.IGNORECASE,
 )
+_NO_DATA_PREFIX_RE = re.compile(r"^\s*(данных нет|нет данных)\s*[—–:\-]\s*", re.IGNORECASE)
 NOT_A_SPEC = "это не техническая характеристика"
 _META_NOTE_RE = re.compile(r"\s*\([^)]*(обычно|важн|типов|уточн|полный|в описании)[^)]*\)", re.IGNORECASE)
 _PLACEHOLDER_NAME_RE = re.compile(
@@ -44,16 +46,20 @@ def _fix_word(word: str) -> str:
     return word.translate(_CYRILLIC_TO_LATIN)
 
 
-def fix_mixed_script(text: str) -> str:
+def source_words(*texts: str) -> set[str]:
+    return {w.lower() for text in texts for w in _WORD_RE.findall(text)}
+
+
+def fix_mixed_script(text: str, keep: set[str] = frozenset()) -> str:
     text = text.replace("‐", "-").replace("‑", "-").replace("\xa0", " ")
-    return _WORD_RE.sub(lambda m: _fix_word(m.group(0)), text)
+    return _WORD_RE.sub(lambda m: m.group(0) if m.group(0).lower() in keep else _fix_word(m.group(0)), text)
 
 
-def mixed_script_words(text: str) -> list[str]:
+def mixed_script_words(text: str, keep: set[str] = frozenset()) -> list[str]:
     result = []
     for word in _WORD_RE.findall(text):
         cyrillic = sum(_is_cyrillic(ch) for ch in word)
-        if 0 < cyrillic < len(word) and word not in result:
+        if 0 < cyrillic < len(word) and word.lower() not in keep and word not in result:
             result.append(word)
     return result
 
@@ -189,7 +195,7 @@ def check_specs(card: LLMCard, product: ProductInput, report: Report) -> None:
 
     for spec in card.key_specs:
         source = spec.source.strip()
-        name = _META_NOTE_RE.sub("", spec.name).strip()
+        name = _NO_DATA_PREFIX_RE.sub("", _META_NOTE_RE.sub("", spec.name)).strip()
         if not name or name.lower() in {"none", NO_DATA} or _PLACEHOLDER_NAME_RE.search(name):
             continue
         name = name[:1].upper() + name[1:]

@@ -24,6 +24,7 @@ from .validator import (
     fix_mixed_script,
     mixed_script_words,
     norm,
+    source_words,
     split_paragraphs,
     validate,
 )
@@ -47,13 +48,13 @@ def parse_card(raw: str) -> LLMCard:
 NO_DATA_IN_CONFLICT = re.compile(r"данных нет|нет данных", re.IGNORECASE)
 
 
-def _fix_strings(value):
+def _fix_strings(value, keep: set[str]):
     if isinstance(value, str):
-        return fix_mixed_script(value)
+        return fix_mixed_script(value, keep)
     if isinstance(value, list):
-        return [_fix_strings(v) for v in value]
+        return [_fix_strings(v, keep) for v in value]
     if isinstance(value, dict):
-        return {k: _fix_strings(v) for k, v in value.items()}
+        return {k: _fix_strings(v, keep) for k, v in value.items()}
     return value
 
 
@@ -129,7 +130,11 @@ def finalize(
 ) -> CardResult:
     check = NumberCheck(product)
     warnings = list(notes or []) + list(report.spec_warnings)
-    card = LLMCard.model_validate(_fix_strings(card.model_dump()))
+    keep = source_words(
+        product.name, product.manufacturer, product.product_type, product.category, product.description,
+        *product.specs.keys(), *product.specs.values(),
+    )
+    card = LLMCard.model_validate(_fix_strings(card.model_dump(), keep))
 
     title = " ".join(card.seo_title.split())
     title = title[:1].upper() + title[1:]
@@ -160,7 +165,7 @@ def finalize(
     )
 
     texts = [title, description, commercial.summary, *queries, *commercial.target_customers, *commercial.tasks]
-    for word in mixed_script_words(" ".join(texts)):
+    for word in mixed_script_words(" ".join(texts), keep):
         warnings.append(f"Слово «{word}» содержит буквы разных алфавитов — проверьте написание")
 
     for issue in report.issues:

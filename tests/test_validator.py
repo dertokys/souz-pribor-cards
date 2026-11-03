@@ -184,3 +184,20 @@ def test_length_limits(product):
 def test_bad_source_is_issue(product):
     card = make_card(key_specs=[{"name": "Давление", "value": "1,0 МПа", "source": "name"}])
     assert any("недопустимый source" in i for i in validate(LLMCard(**card), product).issues)
+
+
+def test_mixed_script_keeps_source_words_and_maps_m():
+    assert fix_mixed_script("Термопара ДТПS155", keep={"дтпs"}) == "Термопара ДТПS155"
+    assert mixed_script_words("ДТПS155", keep={"дтпs"}) == []
+    assert fix_mixed_script("Теmпературный") == "Температурный"
+
+
+def test_no_data_prefix_and_commercial_fields():
+    product = ProductInput(name="МЕГЕОН 08014", specs={"Диапазон": "0…30 %"})
+    card = make_card(key_specs=[
+        {"name": "Данных нет — степень защиты", "value": "данных нет", "source": "none"},
+        {"name": "Гарантийный срок", "value": "данных нет", "source": "none"},
+        {"name": "Цена", "value": "данных нет", "source": "none"},
+    ])
+    report = validate(LLMCard(**card), product)
+    assert [s.name for s in report.spec_lines] == ["Степень защиты"]

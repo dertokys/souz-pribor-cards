@@ -1,15 +1,18 @@
 from functools import lru_cache
 
-from .config import get_settings
+from .config import ConfigError, get_settings
 from .generator import CardGenerator
 from .input_parser import parse_product
-from .llm import OpenAICompatibleClient
+from .llm import LLMConfigError, OpenAICompatibleClient
 from .schemas import CardResult
 
 
 @lru_cache(maxsize=1)
 def get_generator() -> CardGenerator:
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except ConfigError as e:
+        raise LLMConfigError(str(e)) from e
     return CardGenerator(OpenAICompatibleClient(settings), max_attempts=settings.max_attempts)
 
 

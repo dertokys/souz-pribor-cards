@@ -70,3 +70,14 @@ def test_client_without_key_raises_config_error(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "")
     with pytest.raises(LLMConfigError):
         OpenAICompatibleClient(get_settings())
+
+
+def test_invalid_number_in_env_gives_config_error(monkeypatch):
+    monkeypatch.setenv("LLM_MAX_ATTEMPTS", "abc")
+    service.get_generator.cache_clear()
+    try:
+        r = TestClient(app).post("/api/generate", content=json.dumps(PRODUCT, ensure_ascii=False).encode())
+    finally:
+        service.get_generator.cache_clear()
+    assert r.status_code == 500
+    assert "LLM_MAX_ATTEMPTS" in r.json()["error"]
